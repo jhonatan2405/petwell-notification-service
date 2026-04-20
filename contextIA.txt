@@ -1,0 +1,335 @@
+================================================================
+ contextIA.txt — Notification Service
+ PetWell Veterinary Platform
+ Versión: 1.3.0
+================================================================
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. DESCRIPCIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+El Notification Service es el microservicio responsable de:
+
+  • Enviar recordatorios automáticos a dueños de mascotas:
+      - Citas veterinarias (24h antes)
+      - Vacunas próximas
+      - Cumpleaños de mascotas
+      - Recordatorios de medicación
+
+  • Gestionar notificaciones transaccionales:
+      - Cita creada / cancelada
+      - Teleconsulta iniciada
+
+  • Procesar una cola de notificaciones pendientes mediante un
+    cron job que se ejecuta cada minuto.
+
+Puerto: 3007
+Base URL: http://localhost:3007/api/v1
+
+Tecnologías:
+  TypeScript + Express + Supabase (PostgreSQL) + Nodemailer + node-cron
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. MODELO DE DATOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Tabla: notifications
+
+Campo           Tipo              Descripción
+─────────────── ──────────────── ────────────────────────────────────
+id              UUID PK           Generado automáticamente
+user_id         UUID NOT NULL     Identificador del dueño
+type            VARCHAR(50)       Tipo de notificación (ver abajo)
+title           VARCHAR(255)      Asunto / título
+message         TEXT              Cuerpo del mensaje
+channel         VARCHAR(20)       Canal de envío (ver abajo)
+status          VARCHAR(20)       Estado del envío (ver abajo)
+scheduled_at    TIMESTAMPTZ       Cuándo debe enviarse (null = inmediata)
+sent_at         TIMESTAMPTZ       Cuándo fue enviada efectivamente
+metadata        JSONB             Datos adicionales (email, url, etc.)
+created_at      TIMESTAMPTZ       Creación del registro
+updated_at      TIMESTAMPTZ       Última modificación
+
+Tipos de notificación (type):
+  APPOINTMENT_REMINDER   Recordatorio de cita (24h antes)
+  VACCINE_REMINDER       Próxima vacuna
+  BIRTHDAY_REMINDER      Cumpleaños de mascota
+  MEDICATION_REMINDER    Recordatorio de medicación
+  SYSTEM                 Notificación del sistema (cancelación, etc.)
+  TELEMED                Sesión de telemedicina iniciada
+
+Canales (channel):
+  EMAIL    Correo electrónico (implementado con Nodemailer)
+  PUSH     Push notification (placeholder — Firebase FCM)
+  SMS      Mensaje de texto (placeholder — Twilio)
+
+Estados (status):
+  PENDING    Pendiente de envío
+  SENT       Enviada exitosamente
+  FAILED     Falló el envío (se reintenta en siguiente ciclo si procede)
+
+Índices:
+  idx_notifications_user_id      → consultas por usuario
+  idx_notifications_status       → scheduler filtra por PENDING
+  idx_notifications_scheduled_at → scheduler ordena por fecha
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. ENDPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Todos los endpoints (excepto /health) requieren JWT.
+El user_id siempre se extrae del token, nunca del body.
+
+─── GET /health ──────────────────────────────────────
+Comprueba que el servicio esté activo.
+
+Response 200:
+  {
+    "status": "ok",
+    "service": "notification-service",
+    "version": "1.0.0",
+    "timestamp": "2026-04-13T21:00:00Z"
+  }
+
+─── POST /api/v1/notifications ───────────────────────
+Crear una notificación manualmente.
+
+Headers: Authorization: Bearer <token>
+
+Body:
+  {
+    "type": "SYSTEM",
+    "title": "Vacuna próxima",
+    "message": "Buddy necesita su vacuna en 3 días.",
+    "channel": "EMAIL",           // opcional, default EMAIL
+    "scheduled_at": "2026-04-15T10:00:00Z",  // null = inmediata
+    "metadata": { "email": "usuario@email.com" }
+  }
+
+Response 201:
+  {
+    "success": true,
+    "message": "Notificación creada exitosamente",
+    "data": { ...notification }
+  }
+
+─── GET /api/v1/notifications ────────────────────────
+Listar notificaciones del usuario autenticado.
+
+Headers: Authorization: Bearer <token>
+Query params:
+  limit   (default 20)
+  offset  (default 0)
+
+Response 200:
+  {
+    "success": true,
+    "data": [ ...notifications ]
+  }
+
+─── PATCH /api/v1/notifications/:id/status ───────────
+Actualizar el estado de una notificación.
+
+Headers: Authorization: Bearer <token>
+
+Body:
+  {
+    "status": "SENT"   // PENDING | SENT | FAILED
+  }
+
+Response 200:
+  {
+    "success": true,
+    "data": { ...updatedNotification }
+  }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. SCHEDULER (CRON JOB)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Frecuencia: cada minuto  (cron: "* * * * *")
+Implementado en: src/services/scheduler.service.ts
+
+Flujo:
+  1. Consultar notifications donde:
+       status = 'PENDING'
+       AND scheduled_at IS NOT NULL
+       AND scheduled_at <= now()
+
+  2. Para cada notificación encontrada:
+       a. Llamar al dispatcher según channel (EMAIL/PUSH/SMS)
+       b. Si éxito → status = SENT, sent_at = now()
+       c. Si error → status = FAILED (sigue con la siguiente)
+
+  3. El scheduler nunca bloquea por errores individuales.
+
+Dispatcher:
+  EMAIL → email.service.ts → Nodemailer
+  PUSH  → console.log (placeholder)
+  SMS   → console.log (placeholder)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. ENVÍO DE EMAIL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Implementado con: Nodemailer
+Archivo: src/services/email.service.ts
+
+Función principal:
+  sendEmail(to: string, subject: string, message: string): Promise<void>
+
+Template:
+  HTML básico con logo/color PetWell (#4f46e5)
+  Texto plano incluido como fallback
+
+Migración futura a SendGrid o AWS SES:
+  Solo es necesario reemplazar el "transporter" en email.service.ts.
+  La interfaz sendEmail() permanece igual.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. EVENTOS (SIMULADOS)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Los eventos de otros servicios se modelan como funciones
+en notification.service.ts. Actualmente se invocan de forma
+síncrona (preparados para conectarse a un message broker).
+
+onAppointmentCreated(payload)
+  → Crea APPOINTMENT_REMINDER programado 24h antes de la cita
+  → payload: { userId, appointmentDate, petName?, vetName?, email? }
+
+onAppointmentCancelled(payload)
+  → Crea notificación SYSTEM inmediata informando la cancelación
+  → payload: { userId, appointmentDate?, email? }
+
+onTelemedStarted(payload)
+  → Crea notificación TELEMED inmediata con link a sesión
+  → payload: { userId, sessionUrl?, email? }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. SEGURIDAD Y AUTENTICACIÓN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• JWT compartido con el resto de servicios PetWell
+  Secret: JWT_SECRET (variable de entorno)
+
+• El user_id SIEMPRE se extrae del token decodificado,
+  nunca del body de la petición.
+
+• Middleware: src/middlewares/auth.middleware.ts
+
+  authenticateToken  ← protección estándar (JWT obligatorio)
+    → Valida Bearer token en header Authorization
+    → Inyecta req.userId, req.userEmail, req.userRole
+    → Usado en: GET /notifications, PATCH /notifications/:id/status
+
+  authenticateOrPublic  ← protección flexible (JWT opcional)
+    → Si hay Authorization: valida JWT normalmente
+    → Si NO hay Authorization: permite el request SOLO si:
+        • body.email  está presente (destinatario explícito)
+        • body.type   es SYSTEM o AUTH
+    → En modo sin JWT: req.userId = '' y req.userEmail = body.email
+    → Usado en: POST /notifications
+    → Permite flujos: registro, verificación, resend-code
+
+  Casos de uso sin JWT permitidos (POST /notifications):
+    { email: "u@u.com", type: "SYSTEM", ... }  ✅ User Service → registro
+    { email: "u@u.com", type: "AUTH",   ... }  ✅ User Service → resend-code
+    { type: "APPOINTMENT_REMINDER", ... }      ❌ 401 sin JWT (requiere usuario autenticado)
+
+• Helmet: cabeceras HTTP seguras habilitadas
+• CORS: solo orígenes configurados en ALLOWED_ORIGINS
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. VARIABLES DE ENTORNO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+PORT                    Puerto del servicio (3007)
+NODE_ENV                development | production
+JWT_SECRET              Clave compartida para JWT
+SUPABASE_URL            URL del proyecto Supabase
+SUPABASE_SERVICE_ROLE_KEY Clave de servicio de Supabase
+ALLOWED_ORIGINS         Orígenes CORS separados por coma
+
+# Email
+EMAIL_HOST              Servidor SMTP (e.g. smtp.gmail.com)
+EMAIL_PORT              Puerto SMTP (e.g. 587)
+EMAIL_USER              Usuario SMTP
+EMAIL_PASS              Contraseña SMTP
+EMAIL_FROM              Dirección y nombre del remitente
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. ARQUITECTURA DE ARCHIVOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+notification-service/
+├── src/
+│   ├── config/
+│   │   └── supabase.ts              ← cliente Supabase
+│   ├── controllers/
+│   │   └── notification.controller.ts
+│   ├── middlewares/
+│   │   ├── auth.middleware.ts       ← validación JWT
+│   │   └── error.middleware.ts      ← handler global de errores
+│   ├── models/
+│   │   └── notification.model.ts   ← interfaces y tipos TS
+│   ├── repositories/
+│   │   └── notification.repository.ts ← acceso a Supabase
+│   ├── routes/
+│   │   └── notification.routes.ts
+│   ├── services/
+│   │   ├── email.service.ts         ← Nodemailer
+│   │   ├── notification.service.ts  ← lógica de negocio
+│   │   └── scheduler.service.ts     ← cron job
+│   ├── utils/
+│   │   └── response.util.ts         ← helpers de respuesta
+│   └── server.ts                    ← entrada del servidor
+├── database/
+│   └── schema.sql                   ← DDL de la tabla
+├── .env
+├── .gitignore
+├── package.json
+├── tsconfig.json
+└── contextIA.txt
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHANGELOG
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+v1.3.0 — 2026-04-13
+  • Fix dispatch: createNotification ahora lanza envío inmediato si hay email en payload
+  • dispatchNotification usa presencia de email como disparador (no channel === "EMAIL")
+  • Prioridad de resolución de email: notification.email → metadata.email → User Service lookup
+  • Notificaciones inmediatas (scheduled_at <= now o null) se despachan sin esperar al cron
+  • Eliminado fallback a dirección ficticia "@petwell.internal" — se omite con warning si sin destinatario
+
+v1.2.0 — 2026-04-13
+  • Middleware authenticateOrPublic: permite notificaciones sin JWT en flujos de autenticación
+  • POST /notifications acepta requests sin token si body tiene email + type SYSTEM|AUTH
+  • GET /notifications y PATCH status siguen requiriendo JWT (sin cambios)
+  • Rutas migradas de router.use() global a middleware por-ruta para mayor granularidad
+  • Casos habilitados sin JWT: registro, verificación de cuenta, resend-code
+
+
+  • Depuración y corrección del sistema de emails (SMTP)
+  • Bug fix: EMAIL_HOST corregido de dirección email a hostname smtp.gmail.com
+  • email.service.ts: transporter exportado + verificación SMTP al startup
+  • email.service.ts: try/catch con logs detallados (📧, ✅, ❌) en sendEmail
+  • notification.service.ts: log del payload completo antes de despachar
+  • Resultado esperado en consola:
+      ✅ SMTP listo para enviar correos
+      📦 Notificación recibida: { ... }
+      📧 Intentando enviar correo a: usuario@ejemplo.com
+      ✅ Email enviado correctamente: 250 OK
+
+v1.0.0 — 2026-04-13
+  • Notification Service inicial
+  • Cron scheduler (node-cron, cada minuto)
+  • Email con Nodemailer (preparado para SendGrid/SES)
+  • Endpoints: POST, GET, PATCH status
+  • Eventos simulados: onAppointmentCreated, onAppointmentCancelled, onTelemedStarted
+  • Autenticación JWT compartida con el ecosistema PetWell
+  • Schema SQL con índices y trigger de updated_at
+
+[CHANGELOG] Fix final de notificaciones inmediatas, timezone Colombia y consistencia de fechas
