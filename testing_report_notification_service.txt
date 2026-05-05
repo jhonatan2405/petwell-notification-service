@@ -1,0 +1,87 @@
+REPORTE DE PRUEBAS AUTOMATIZADAS - NOTIFICATION SERVICE
+=========================================================
+
+1. INTRODUCCIÓN
+---------------------------------------------------------
+El "Notification Service" es un microservicio fundamental dentro del ecosistema PetWell. Su responsabilidad principal es centralizar, programar y enviar notificaciones a los usuarios, tales como recordatorios de citas veterinarias, vacunas, alertas del sistema y enlaces de telemedicina.
+
+El objetivo de este proceso de Quality Assurance (QA) fue implementar una suite sólida de pruebas automatizadas utilizando Jest y Supertest, garantizando la fiabilidad del servicio sin modificar ni romper el código fuente existente. Se implementaron un total de 25 pruebas que validan desde la lógica interna hasta la respuesta de las rutas HTTP.
+
+
+2. PRUEBAS UNITARIAS
+---------------------------------------------------------
+Las pruebas unitarias son evaluaciones aisladas de los componentes más pequeños de una aplicación (en este caso, los métodos del "NotificationService"). Su propósito es verificar que la lógica de negocio funcione correctamente sin depender de elementos externos como la base de datos o el envío real de correos.
+
+En este proyecto se implementaron 13 pruebas unitarias que cubrieron funciones clave:
+- Creación de datos: Se validó que al proveer datos correctos, el servicio estructure y retorne la notificación en estado "PENDING".
+- Validaciones: Se verificó la lógica de negocio, como la regla que previene la creación de notificaciones duplicadas para una misma vacuna ("VACCINE_REMINDER").
+- Manejo de errores: Se probaron los escenarios de fallo, garantizando que el sistema arroje excepciones controladas cuando faltan datos obligatorios (ej. falta de 'user_id' o 'email').
+
+
+3. PRUEBAS DE INTEGRACIÓN
+---------------------------------------------------------
+A diferencia de las unitarias, las pruebas de integración evalúan cómo interactúan múltiples componentes juntos. En una API, esto significa simular una petición HTTP real (GET, POST, PATCH) y verificar que toda la cadena (Ruta -> Middleware -> Controlador -> Servicio) funcione correctamente.
+
+Para esto se utilizó "Supertest", una librería que simula un servidor Express en memoria. Se implementaron 12 pruebas para los siguientes endpoints:
+- POST /notifications: Se validó la creación autenticada y los flujos públicos permitidos (ej. registro de cuenta).
+- GET /notifications: Se verificó que retorne el historial correcto al proveer un JWT válido, y que bloquee el acceso (HTTP 401) si no hay token.
+- PATCH /notifications/:id/read y /read-all: Se probó la funcionalidad de marcar notificaciones como leídas por el usuario.
+
+
+4. USO DE MOCKS
+---------------------------------------------------------
+Un "Mock" es un objeto o función simulada que imita el comportamiento de dependencias reales. En el testing profesional, es una mala práctica depender de bases de datos de producción o enviar correos reales durante las pruebas.
+
+En este microservicio se mockearon dos elementos críticos:
+1. Base de Datos (Supabase): Se simuló el "NotificationRepository" para que respondiera con datos predefinidos en lugar de hacer consultas SQL reales.
+2. Servicios Externos (Nodemailer): Se mockeó la función "sendEmail" para interceptar la orden de envío de correo, verificando que el sistema intentó enviarlo sin enviar spam a correos reales.
+Esto es vital porque hace que las pruebas sean extremadamente rápidas (milisegundos), predecibles y seguras.
+
+
+5. USO DE MATCHERS
+---------------------------------------------------------
+En Jest, los "Matchers" son funciones que permiten afirmar o comparar resultados esperados contra resultados obtenidos. La estructura base es "expect(valor_obtenido).matcher(valor_esperado)".
+
+Ejemplos utilizados en el proyecto:
+- toBe(): Compara valores exactos primitivos. Ejemplo: expect(res.status).toBe(200) afirma que el código HTTP devuelto es exactamente 200.
+- toEqual(): Compara la estructura completa de objetos o arreglos.
+- toHaveProperty(): Verifica que un objeto contenga una llave específica. Ejemplo: expect(res.body).toHaveProperty('success', true).
+- toBeDefined(): Verifica que una variable no sea 'undefined'.
+
+
+6. PRUEBAS ASÍNCRONAS
+---------------------------------------------------------
+Dado que el microservicio interactúa con bases de datos y red, casi todo su código es asíncrono. Las pruebas deben esperar a que estas promesas se resuelvan.
+
+- async / await: Se utilizó en casi todas las pruebas para pausar la aserción hasta que el controlador o servicio terminara su ejecución.
+- resolves / rejects: Se usaron matchers específicos para promesas. Por ejemplo, "expect(...).rejects.toThrow()" verifica que una función asíncrona falle deliberadamente y arroje el error esperado, útil para testear validaciones.
+
+
+7. COBERTURA DE CÓDIGO (COVERAGE)
+---------------------------------------------------------
+La cobertura de código mide qué porcentaje del código fuente fue ejecutado durante la corrida de los tests. Jest genera estas métricas basándose en 4 pilares:
+- Statements (Declaraciones): Porcentaje de instrucciones individuales ejecutadas.
+- Branches (Ramas): Evalúa si se recorrieron todos los caminos de las sentencias condicionales (if / else).
+- Functions (Funciones): Mide cuántas funciones fueron llamadas al menos una vez.
+- Lines (Líneas): Porcentaje de líneas de código físico ejecutadas.
+
+Se configuraron umbrales estrictos en "jest.config.js" para exigir que la cobertura no baje del 75%, garantizando alta calidad de software.
+
+
+8. RESULTADOS Y REPORTE HTML
+---------------------------------------------------------
+Al ejecutar el comando "npm run test:coverage", Jest generó un reporte visual en formato HTML (coverage/lcov-report/index.html).
+
+Al abrir este archivo en el navegador, se observa la estructura del proyecto con indicadores de color:
+- Verde: Significa que la línea de código, función o rama condicional fue ejecutada exitosamente por los tests.
+- Amarillo: Indica que una rama condicional (if/else) se evaluó de forma incompleta (ej. se probó el "if" pero no el "else").
+- Rojo: Alerta sobre líneas de código o funciones que nunca fueron ejecutadas durante las pruebas (código no testeado).
+
+El microservicio obtuvo una calificación global aproximada de ~79%, lo cual es un estándar alto en la industria, asegurando que el flujo principal de datos y el manejo de errores están completamente cubiertos.
+
+
+9. CONCLUSIÓN
+---------------------------------------------------------
+La implementación de esta suite de pruebas dota al Notification Service de una capa de protección vital. Se logró cubrir los casos de uso principales e integraciones sin alterar el comportamiento en producción.
+
+El testing automatizado no solo previene la regresión de bugs futuros cuando se agregan nuevas características, sino que documenta explícitamente cómo debe comportarse el sistema, aportando tranquilidad al equipo de desarrollo y estabilidad a los usuarios de PetWell.

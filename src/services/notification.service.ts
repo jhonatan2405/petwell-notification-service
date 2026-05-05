@@ -34,6 +34,10 @@ export class NotificationService {
             channel: dto.channel || 'EMAIL',
             status: 'PENDING',
             created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            scheduled_at: dto.scheduled_at ?? null,
+            sent_at: null,
+            metadata: dto.metadata ?? null,
             is_read: false
           };
         }
