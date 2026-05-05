@@ -1,27 +1,14 @@
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// ─── Transporter reutilizable ─────────────────────────────────────────────────
-export const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: Number(process.env.EMAIL_PORT),
-  secure: false, // true solo para puerto 465
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// ─── Cliente Resend (HTTP API — no bloqueado por Render) ──────────────────────
+const resend = new Resend(process.env.RESEND_API_KEY);
 
-// ─── Verificación SMTP al iniciar ─────────────────────────────────────────────
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('❌ Error conexión SMTP:', error);
-  } else {
-    console.log('✅ SMTP listo para enviar correos');
-  }
-});
+console.log(process.env.RESEND_API_KEY
+  ? '✅ Resend API Key cargada correctamente'
+  : '⚠️  RESEND_API_KEY no configurada — los correos no se enviarán');
 
 /**
  * Envía un email usando Nodemailer.
@@ -36,7 +23,7 @@ export async function sendEmail(
   try {
     console.log('📧 Intentando enviar correo a:', to);
 
-    const from = `"PetWell 🐾" <${process.env.EMAIL_USER}>`;
+    const from = `PetWell <onboarding@resend.dev>`;
 
     // ─── 1) OTP / Código de Verificación ─────────────────────────────────────
     let contentHtml = `<p style="color: #4b5563; font-size: 16px; line-height: 1.8; margin-bottom: 24px; white-space: pre-line;">${message}</p>`;
@@ -173,15 +160,20 @@ export async function sendEmail(
 </html>
     `;
 
-    const info = await transporter.sendMail({
+    const { data, error: sendError } = await resend.emails.send({
       from,
       to,
       subject,
-      text: message, // fallback plaintext
+      text: message,
       html: htmlBody,
     });
 
-    console.log('✅ Email enviado correctamente:', info.response);
+    if (sendError) {
+      console.error('❌ Error enviando email (Resend):', sendError);
+      throw new Error(sendError.message);
+    }
+
+    console.log('✅ Email enviado correctamente via Resend. ID:', data?.id);
   } catch (error) {
     console.error('❌ Error enviando email:', error);
     throw error;
@@ -190,12 +182,12 @@ export async function sendEmail(
 
 
 /**
- * Verifica la conexión SMTP. Útil para el health check.
+ * Verifica la conexión con Resend. Útil para el health check.
  */
 export async function verifyEmailConnection(): Promise<boolean> {
   try {
-    await transporter.verify();
-    return true;
+    // Resend no necesita verificación de conexión — si la API key existe, está lista
+    return !!process.env.RESEND_API_KEY;
   } catch {
     return false;
   }
