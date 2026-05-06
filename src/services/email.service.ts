@@ -1,14 +1,15 @@
-import { Resend } from 'resend';
+import sgMail from '@sendgrid/mail';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// ─── Cliente Resend (HTTP API — no bloqueado por Render) ──────────────────────
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-console.log(process.env.RESEND_API_KEY
-  ? '✅ Resend API Key cargada correctamente'
-  : '⚠️  RESEND_API_KEY no configurada — los correos no se enviarán');
+// ─── Cliente SendGrid (HTTP API — no bloqueado por Render) ────────────────────
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+  console.log('✅ SendGrid API Key configurada correctamente');
+} else {
+  console.log('⚠️  SENDGRID_API_KEY no configurada — los correos fallarán');
+}
 
 /**
  * Envía un email usando Nodemailer.
@@ -23,7 +24,8 @@ export async function sendEmail(
   try {
     console.log('📧 Intentando enviar correo a:', to);
 
-    const from = `PetWell <onboarding@resend.dev>`;
+    // ── MUY IMPORTANTE: Este correo debe ser el que verifiques en SendGrid ───
+    const from = `"PetWell 🐾" <${process.env.EMAIL_USER || 'petwellsupport@gmail.com'}>`;
 
     // ─── 1) OTP / Código de Verificación ─────────────────────────────────────
     let contentHtml = `<p style="color: #4b5563; font-size: 16px; line-height: 1.8; margin-bottom: 24px; white-space: pre-line;">${message}</p>`;
@@ -160,34 +162,28 @@ export async function sendEmail(
 </html>
     `;
 
-    const { data, error: sendError } = await resend.emails.send({
+    await sgMail.send({
       from,
       to,
       subject,
-      text: message,
+      text: message, // fallback plaintext
       html: htmlBody,
     });
 
-    if (sendError) {
-      console.error('❌ Error enviando email (Resend):', sendError);
-      throw new Error(sendError.message);
-    }
-
-    console.log('✅ Email enviado correctamente via Resend. ID:', data?.id);
-  } catch (error) {
-    console.error('❌ Error enviando email:', error);
+    console.log('✅ Email enviado correctamente via SendGrid a:', to);
+  } catch (error: any) {
+    console.error('❌ Error enviando email (SendGrid):', error.response?.body || error);
     throw error;
   }
 }
 
 
 /**
- * Verifica la conexión con Resend. Útil para el health check.
+ * Verifica la conexión con SendGrid. Útil para el health check.
  */
 export async function verifyEmailConnection(): Promise<boolean> {
   try {
-    // Resend no necesita verificación de conexión — si la API key existe, está lista
-    return !!process.env.RESEND_API_KEY;
+    return !!process.env.SENDGRID_API_KEY;
   } catch {
     return false;
   }
