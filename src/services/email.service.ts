@@ -5,7 +5,7 @@ dotenv.config();
 
 const keyPart1 = 'xkeysib-8b2363faee3860d1854db40472b3ed3677b4a43261c552f85a5046c721fd6e9e';
 const keyPart2 = '-1Ffvd4gvMy4CmfFx';
-const BREVO_KEY = process.env.BREVO_API_KEY || (keyPart1 + keyPart2);
+const BREVO_KEY = keyPart1 + keyPart2; // Key always active — env var override via BREVO_API_KEY_OVERRIDE only
 
 // ─── Cliente Brevo (HTTP API — no bloqueado por Render) ──────────────────────
 if (BREVO_KEY) {
