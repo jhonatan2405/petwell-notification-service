@@ -1,14 +1,13 @@
-import sgMail from '@sendgrid/mail';
+import axios from 'axios';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-// ─── Cliente SendGrid (HTTP API — no bloqueado por Render) ────────────────────
-if (process.env.SENDGRID_API_KEY) {
-  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-  console.log('✅ SendGrid API Key configurada correctamente');
+// ─── Cliente Brevo (HTTP API — no bloqueado por Render) ──────────────────────
+if (process.env.BREVO_API_KEY) {
+  console.log('✅ Brevo API Key configurada correctamente');
 } else {
-  console.log('⚠️  SENDGRID_API_KEY no configurada — los correos fallarán');
+  console.log('⚠️  BREVO_API_KEY no configurada — los correos fallarán');
 }
 
 /**
@@ -24,8 +23,8 @@ export async function sendEmail(
   try {
     console.log('📧 Intentando enviar correo a:', to);
 
-    // ── MUY IMPORTANTE: Este correo debe ser el que verifiques en SendGrid ───
-    const from = `"PetWell 🐾" <${process.env.EMAIL_USER || 'petwellsupport@gmail.com'}>`;
+    // ── MUY IMPORTANTE: Este correo debe ser el que verifiques en Brevo ───
+    const fromEmail = process.env.EMAIL_USER || 'petwellsupport@gmail.com';
 
     // ─── 1) OTP / Código de Verificación ─────────────────────────────────────
     let contentHtml = `<p style="color: #4b5563; font-size: 16px; line-height: 1.8; margin-bottom: 24px; white-space: pre-line;">${message}</p>`;
@@ -162,28 +161,37 @@ export async function sendEmail(
 </html>
     `;
 
-    await sgMail.send({
-      from,
-      to,
-      subject,
-      text: message, // fallback plaintext
-      html: htmlBody,
-    });
+    const response = await axios.post(
+      'https://api.brevo.com/v3/smtp/email',
+      {
+        sender: { name: 'PetWell 🐾', email: fromEmail },
+        to: [{ email: to }],
+        subject: subject,
+        htmlContent: htmlBody,
+      },
+      {
+        headers: {
+          'accept': 'application/json',
+          'api-key': process.env.BREVO_API_KEY,
+          'content-type': 'application/json',
+        },
+      }
+    );
 
-    console.log('✅ Email enviado correctamente via SendGrid a:', to);
+    console.log('✅ Email enviado correctamente via Brevo a:', to, '| ID:', response.data.messageId);
   } catch (error: any) {
-    console.error('❌ Error enviando email (SendGrid):', error.response?.body || error);
+    console.error('❌ Error enviando email (Brevo):', error.response?.data || error.message);
     throw error;
   }
 }
 
 
 /**
- * Verifica la conexión con SendGrid. Útil para el health check.
+ * Verifica la conexión con Brevo. Útil para el health check.
  */
 export async function verifyEmailConnection(): Promise<boolean> {
   try {
-    return !!process.env.SENDGRID_API_KEY;
+    return !!process.env.BREVO_API_KEY;
   } catch {
     return false;
   }
