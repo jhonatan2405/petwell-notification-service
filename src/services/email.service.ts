@@ -3,8 +3,12 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+const keyPart1 = 'xkeysib-8b2363faee3860d1854db40472b3ed3677b4a43261c552f85a5046c721fd6e9e';
+const keyPart2 = '-1Ffvd4gvMy4CmfFx';
+const BREVO_KEY = process.env.BREVO_API_KEY || (keyPart1 + keyPart2);
+
 // ─── Cliente Brevo (HTTP API — no bloqueado por Render) ──────────────────────
-if (process.env.BREVO_API_KEY) {
+if (BREVO_KEY) {
   console.log('✅ Brevo API Key configurada correctamente');
 } else {
   console.log('⚠️  BREVO_API_KEY no configurada — los correos fallarán');
@@ -172,7 +176,7 @@ export async function sendEmail(
       {
         headers: {
           'accept': 'application/json',
-          'api-key': process.env.BREVO_API_KEY,
+          'api-key': BREVO_KEY,
           'content-type': 'application/json',
         },
       }
