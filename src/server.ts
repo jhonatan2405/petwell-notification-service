@@ -31,7 +31,7 @@ const metricsMiddleware = promBundle({
   includeUp: true,
   promClient: { collectDefaultMetrics: {} },
 });
-app.use(metricsMiddleware);
+app.use(metricsMiddleware as any);
 
 // ─── Health check ─────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
