@@ -49,7 +49,10 @@ export class NotificationService {
     console.log('📦 Notificación recibida:', notification);
 
     // ── Dispatch inmediato ──────────────────────────────────────────────────
-    if (notification.email && (!notification.scheduled_at || new Date(notification.scheduled_at) <= new Date())) {
+    // Se ejecuta si: (hay email directo O hay user_id) Y (no está programado O ya llegó la hora)
+    const hasRecipient = !!(notification.email || notification.user_id);
+    const isDue = !notification.scheduled_at || new Date(notification.scheduled_at) <= new Date();
+    if (hasRecipient && isDue) {
       console.log("⚡ Dispatch inmediato de notificación");
       this.dispatchNotification(notification).catch(err =>
         console.error("❌ Error dispatch inmediato:", err)
